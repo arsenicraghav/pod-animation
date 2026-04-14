@@ -1,0 +1,272 @@
+
+<h2 class="sr-only">Pod state transitions during helm upgrade with a new docker image on a 5-replica StatefulSet with parallel pod management policy</h2>
+<style>
+.sw{padding:1rem 0}
+.ph-label{font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--color-text-tertiary);margin-bottom:8px}
+.pips{display:flex;gap:5px;margin-bottom:16px}
+.pip{height:4px;flex:1;border-radius:2px;background:var(--color-border-tertiary);transition:background .3s}
+.pip.done{background:var(--color-border-info)}
+.pip.active{background:var(--color-text-info)}
+.sc{background:var(--color-background-primary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:1rem 1.25rem}
+.sh{display:flex;align-items:baseline;gap:10px;margin-bottom:6px}
+.snum{font-size:12px;color:var(--color-text-tertiary)}
+.stitle{font-size:15px;font-weight:500;color:var(--color-text-primary)}
+.sdesc{font-size:13px;color:var(--color-text-secondary);line-height:1.55;margin-bottom:12px}
+.pod-grid{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.pod{display:flex;flex-direction:column;align-items:center;gap:3px}
+.pb{width:74px;height:52px;border-radius:8px;border:.5px solid;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:11px;font-weight:500;line-height:1.35;text-align:center}
+.pname{font-size:11px;color:var(--color-text-tertiary)}
+.ptag{font-size:10px;height:13px;font-weight:500}
+.tag-v1{color:var(--color-text-tertiary)}
+.tag-v2{color:#0F6E56}
+.tag-term{color:#993C1D}
+.tag-blank{color:transparent}
+.s-none  {background:var(--color-background-secondary);border-color:var(--color-border-tertiary);color:var(--color-text-tertiary)}
+.s-rdy1  {background:#E1F5EE;border-color:#9FE1CB;color:#1D9E75}
+.s-rdy1s {background:#E1F5EE;border-color:#0F6E56;color:#085041}
+.s-term  {background:#FAECE7;border-color:#993C1D;color:#712B13}
+.s-pend  {background:#FAEEDA;border-color:#854F0B;color:#633806}
+.s-crea  {background:#E6F1FB;border-color:#185FA5;color:#0C447C}
+.s-star  {background:#EEEDFE;border-color:#534AB7;color:#3C3489}
+.s-rdy2  {background:#EAF3DE;border-color:#3B6D11;color:#27500A}
+.s-gone  {background:var(--color-background-secondary);border-color:var(--color-border-tertiary);color:var(--color-text-tertiary);opacity:.45}
+.nb{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:8px 12px;font-size:12px;color:var(--color-text-secondary);line-height:1.5;margin-bottom:12px}
+.nb strong{color:var(--color-text-primary);font-weight:500}
+.nr{display:flex;align-items:center;justify-content:space-between;margin-top:4px}
+.btn{background:transparent;border:.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);padding:6px 18px;font-size:13px;color:var(--color-text-primary);cursor:pointer}
+.btn:disabled{opacity:.3;cursor:default}
+.btn:not(:disabled):hover{background:var(--color-background-secondary)}
+.ctr{font-size:12px;color:var(--color-text-tertiary)}
+.legend{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.leg{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--color-text-secondary)}
+.leg-dot{width:10px;height:10px;border-radius:2px;border:.5px solid;flex-shrink:0}
+.wave-badge{display:inline-block;font-size:10px;font-weight:500;padding:2px 8px;border-radius:10px;background:var(--color-background-info);color:var(--color-text-info);margin-bottom:10px}
+</style>
+
+<div class="sw">
+  <div class="ph-label" id="ph"></div>
+  <div class="pips" id="pips"></div>
+  <div class="legend">
+    <div class="leg"><div class="leg-dot" style="background:#E1F5EE;border-color:#9FE1CB"></div>Ready v1</div>
+    <div class="leg"><div class="leg-dot" style="background:#FAECE7;border-color:#993C1D"></div>Terminating v1</div>
+    <div class="leg"><div class="leg-dot" style="background:#FAEEDA;border-color:#854F0B"></div>Pending v2</div>
+    <div class="leg"><div class="leg-dot" style="background:#EEEDFE;border-color:#534AB7"></div>Running (startup) v2</div>
+    <div class="leg"><div class="leg-dot" style="background:#EAF3DE;border-color:#3B6D11"></div>Ready v2</div>
+  </div>
+  <div class="sc" id="sc"></div>
+</div>
+
+<script>
+const R1  = (dim) => ({l:'Ready\nv1',          c: dim ? 's-rdy1' : 's-rdy1s', t:'v1'});
+const TRM = {l:'Terminating\nv1', c:'s-term',  t:'term'};
+const PND = {l:'Pending\nv2',     c:'s-pend',  t:'v2'};
+const CRE = {l:'Creating\nv2',    c:'s-crea',  t:'v2'};
+const STR = {l:'Running\nv2',     c:'s-star',  t:'v2'};
+const R2  = {l:'Ready\nv2',       c:'s-rdy2',  t:'v2'};
+const GON = {l:'gone',            c:'s-gone',  t:'blank'};
+
+const steps = [
+  {
+    phase: 'before upgrade',
+    wave: null,
+    title: 'Steady state — 5 replicas on v1',
+    desc: 'All five pods are Running and Ready on the v1 image. The StatefulSet reports 5/5. You are about to run helm upgrade with a new image tag.',
+    note: '<strong>Rolling update direction:</strong> StatefulSets always roll from the highest ordinal down — pod-4 is replaced first, pod-0 last. This is the reverse of creation order.',
+    pods:[
+      {name:'pod-0',s:R1(false)},{name:'pod-1',s:R1(false)},{name:'pod-2',s:R1(false)},
+      {name:'pod-3',s:R1(false)},{name:'pod-4',s:R1(false)},
+    ],
+  },
+  {
+    phase: 'helm upgrade triggered',
+    wave: null,
+    title: 'Helm patches the pod template',
+    desc: 'helm upgrade sends the updated manifest. Kubernetes patches the StatefulSet\'s pod template with the new image. The controller computes a new template hash and begins the rollout.',
+    note: '<strong>maxUnavailable defaults to 1</strong> for StatefulSets. Only one pod may be unavailable at a time. The controller works from pod-4 down to pod-0, one wave per pod.',
+    pods:[
+      {name:'pod-0',s:R1(false)},{name:'pod-1',s:R1(false)},{name:'pod-2',s:R1(false)},
+      {name:'pod-3',s:R1(false)},{name:'pod-4',s:R1(false)},
+    ],
+  },
+  {
+    phase: 'wave 1 — pod-4',
+    wave: 'Wave 1 of 5',
+    title: 'pod-4 terminated, v2 pod scheduled',
+    desc: 'The controller removes pod-4 from the Service endpoint list and sets its deletionTimestamp. preStop hook runs, then SIGTERM is sent. Simultaneously a new pod-4 with the v2 image enters Pending.',
+    note: '<strong>pod-0 through pod-3 keep serving traffic.</strong> With maxUnavailable: 1, you always have at least 4 of 5 pods Ready during the rollout.',
+    pods:[
+      {name:'pod-0',s:R1(false)},{name:'pod-1',s:R1(false)},{name:'pod-2',s:R1(false)},
+      {name:'pod-3',s:R1(false)},{name:'pod-4',s:TRM},
+    ],
+  },
+  {
+    phase: 'wave 1 — pod-4',
+    wave: 'Wave 1 of 5',
+    title: 'New pod-4 starts up on v2',
+    desc: 'Old pod-4 finishes terminating and disappears. New pod-4 pulls the v2 image, goes through ContainerCreating, then Running with startup probe active.',
+    note: '<strong>The old pod must fully terminate</strong> before the new one is counted as part of the StatefulSet. You may briefly see a "4/5" ready count here.',
+    pods:[
+      {name:'pod-0',s:R1(false)},{name:'pod-1',s:R1(false)},{name:'pod-2',s:R1(false)},
+      {name:'pod-3',s:R1(false)},{name:'pod-4',s:STR},
+    ],
+  },
+  {
+    phase: 'wave 1 — pod-4',
+    wave: 'Wave 1 of 5',
+    title: 'pod-4 Ready on v2 — wave 1 complete',
+    desc: 'New pod-4 passes its readiness probe and rejoins the Service endpoints. 5/5 pods are Ready again. The controller can now proceed to the next pod.',
+    note: '<strong>The controller waits for Ready</strong> before moving to the next wave — this is true even with Parallel policy. maxUnavailable: 1 enforces it.',
+    pods:[
+      {name:'pod-0',s:R1(false)},{name:'pod-1',s:R1(false)},{name:'pod-2',s:R1(false)},
+      {name:'pod-3',s:R1(false)},{name:'pod-4',s:R2},
+    ],
+  },
+  {
+    phase: 'wave 2 — pod-3',
+    wave: 'Wave 2 of 5',
+    title: 'pod-3 terminated, v2 pod scheduled',
+    desc: 'Same pattern repeats. pod-3 is removed from endpoints, SIGTERM sent. New pod-3 on v2 enters Pending. pod-4 is already on v2 and serving traffic.',
+    note: '<strong>Pattern:</strong> terminate old → wait for gone → new pod Pending → ContainerCreating → Running → Ready → next wave.',
+    pods:[
+      {name:'pod-0',s:R1(false)},{name:'pod-1',s:R1(false)},{name:'pod-2',s:R1(false)},
+      {name:'pod-3',s:TRM},{name:'pod-4',s:R2},
+    ],
+  },
+  {
+    phase: 'wave 2 — pod-3',
+    wave: 'Wave 2 of 5',
+    title: 'pod-3 Ready on v2 — wave 2 complete',
+    desc: 'New pod-3 passes readiness. 5/5 Ready. Two pods are now on v2, three still on v1. Controller moves to pod-2.',
+    note: '<strong>At this point</strong> pod-3 and pod-4 are on v2. Requests may hit any of the 5 pods — make sure v1 and v2 are API-compatible if your app has active traffic.',
+    pods:[
+      {name:'pod-0',s:R1(false)},{name:'pod-1',s:R1(false)},{name:'pod-2',s:R1(false)},
+      {name:'pod-3',s:R2},{name:'pod-4',s:R2},
+    ],
+  },
+  {
+    phase: 'wave 3 — pod-2',
+    wave: 'Wave 3 of 5',
+    title: 'pod-2 terminated, v2 pod scheduled',
+    desc: 'pod-2 is terminated. New pod-2 on v2 starts up. At this point we are halfway through — 2 pods confirmed on v2, 1 terminating/replacing, 2 still on v1.',
+    note: '<strong>Halfway point.</strong> If you run kubectl rollout status now you will see "Waiting for deployment rollout to finish: 2 out of 5 new replicas have been updated."',
+    pods:[
+      {name:'pod-0',s:R1(false)},{name:'pod-1',s:R1(false)},{name:'pod-2',s:TRM},
+      {name:'pod-3',s:R2},{name:'pod-4',s:R2},
+    ],
+  },
+  {
+    phase: 'wave 3 — pod-2',
+    wave: 'Wave 3 of 5',
+    title: 'pod-2 Ready on v2 — wave 3 complete',
+    desc: 'New pod-2 passes readiness. 5/5 Ready. Three pods on v2, two still on v1. Controller moves to pod-1.',
+    note: '<strong>No traffic interruption</strong> throughout — at every moment between waves, all 5 pods are Ready and in the Service endpoint list.',
+    pods:[
+      {name:'pod-0',s:R1(false)},{name:'pod-1',s:R1(false)},{name:'pod-2',s:R2},
+      {name:'pod-3',s:R2},{name:'pod-4',s:R2},
+    ],
+  },
+  {
+    phase: 'wave 4 — pod-1',
+    wave: 'Wave 4 of 5',
+    title: 'pod-1 terminated, v2 pod scheduled',
+    desc: 'pod-1 is terminated. New pod-1 on v2 starts up. Four pods total have been through the update cycle. Only pod-0 — the original leader — remains on v1.',
+    note: '<strong>pod-0 is always last</strong> in a StatefulSet rolling update. This mirrors the creation rule: it was first up, it is last to be replaced.',
+    pods:[
+      {name:'pod-0',s:R1(false)},{name:'pod-1',s:TRM},{name:'pod-2',s:R2},
+      {name:'pod-3',s:R2},{name:'pod-4',s:R2},
+    ],
+  },
+  {
+    phase: 'wave 4 — pod-1',
+    wave: 'Wave 4 of 5',
+    title: 'pod-1 Ready on v2 — wave 4 complete',
+    desc: 'New pod-1 passes readiness. 5/5 Ready. Four pods on v2. Only pod-0 remains on v1. Controller proceeds to the final wave.',
+    note: 'You can pause a rollout here with <strong>kubectl rollout pause</strong> if you want to canary-test v2 on 4 out of 5 pods before completing.',
+    pods:[
+      {name:'pod-0',s:R1(false)},{name:'pod-1',s:R2},{name:'pod-2',s:R2},
+      {name:'pod-3',s:R2},{name:'pod-4',s:R2},
+    ],
+  },
+  {
+    phase: 'wave 5 — pod-0 (final)',
+    wave: 'Wave 5 of 5',
+    title: 'pod-0 terminated — last wave',
+    desc: 'pod-0, the original primary, is now terminated. It is removed from endpoints, receives SIGTERM, and drains. A new pod-0 with the v2 image is scheduled.',
+    note: '<strong>This is the most sensitive wave</strong> for stateful apps. If pod-0 was your database primary or leader, a failover may happen here. Ensure your app handles this gracefully.',
+    pods:[
+      {name:'pod-0',s:TRM},{name:'pod-1',s:R2},{name:'pod-2',s:R2},
+      {name:'pod-3',s:R2},{name:'pod-4',s:R2},
+    ],
+  },
+  {
+    phase: 'wave 5 — pod-0 (final)',
+    wave: 'Wave 5 of 5',
+    title: 'pod-0 starts up on v2',
+    desc: 'New pod-0 pulls the v2 image and goes through ContainerCreating → Running (startup probe). All other pods are already on v2 and serving traffic.',
+    note: '<strong>4 out of 5 pods are Ready</strong> at this moment. If your Service requires all 5, there is a brief period where one endpoint is missing.',
+    pods:[
+      {name:'pod-0',s:STR},{name:'pod-1',s:R2},{name:'pod-2',s:R2},
+      {name:'pod-3',s:R2},{name:'pod-4',s:R2},
+    ],
+  },
+  {
+    phase: 'upgrade complete',
+    wave: null,
+    title: 'All 5 pods Ready on v2 — rollout done',
+    desc: 'New pod-0 passes its readiness probe. All 5 pods are now on v2 and serving traffic. The StatefulSet reports 5/5. helm upgrade --wait returns success.',
+    note: '<strong>Old ReplicaSet kept at 0 replicas</strong> for rollback. Run helm rollback to reverse the process — same 5-wave pattern, but pod-0 first up to pod-4 last.',
+    pods:[
+      {name:'pod-0',s:R2},{name:'pod-1',s:R2},{name:'pod-2',s:R2},
+      {name:'pod-3',s:R2},{name:'pod-4',s:R2},
+    ],
+  },
+];
+
+let cur = 0;
+
+function tagClass(t){
+  if(t==='v1') return 'tag-v1';
+  if(t==='v2') return 'tag-v2';
+  if(t==='term') return 'tag-term';
+  return 'tag-blank';
+}
+function tagLabel(t){
+  if(t==='v1') return 'v1';
+  if(t==='v2') return 'v2';
+  if(t==='term') return 'terminating';
+  return '\u00a0';
+}
+
+function render(){
+  const s = steps[cur];
+  document.getElementById('ph').textContent = s.phase;
+  document.getElementById('pips').innerHTML = steps.map((_,i)=>
+    `<div class="pip${i<cur?' done':i===cur?' active':''}"></div>`
+  ).join('');
+
+  const podHTML = s.pods.map(p=>`
+    <div class="pod">
+      <div class="pb ${p.s.c}">${p.s.l.replace(/\n/g,'<br>')}</div>
+      <div class="pname">${p.name}</div>
+      <div class="ptag ${tagClass(p.s.t)}">${tagLabel(p.s.t)}</div>
+    </div>`).join('');
+
+  document.getElementById('sc').innerHTML = `
+    <div class="sh">
+      <span class="snum">${cur+1} / ${steps.length}</span>
+      <span class="stitle">${s.title}</span>
+    </div>
+    ${s.wave ? `<div class="wave-badge">${s.wave}</div>` : ''}
+    <div class="sdesc">${s.desc}</div>
+    <div class="pod-grid">${podHTML}</div>
+    <div class="nb">${s.note}</div>
+    <div class="nr">
+      <button class="btn" onclick="go(-1)" ${cur===0?'disabled':''}>← Back</button>
+      <span class="ctr">${cur+1} of ${steps.length}</span>
+      <button class="btn" onclick="go(1)" ${cur===steps.length-1?'disabled':''}>Next →</button>
+    </div>`;
+}
+
+function go(d){cur=Math.max(0,Math.min(steps.length-1,cur+d));render();}
+render();
+</script>
