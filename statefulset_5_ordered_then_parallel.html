@@ -1,0 +1,231 @@
+
+<h2 class="sr-only">Pod state transitions for a fresh StatefulSet with 5 replicas: pod-0 uses OrderedReady, then pod-1 through pod-4 come up in parallel</h2>
+<style>
+.sw{padding:1rem 0}
+.ph-label{font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--color-text-tertiary);margin-bottom:8px}
+.pips{display:flex;gap:5px;margin-bottom:20px}
+.pip{height:4px;flex:1;border-radius:2px;background:var(--color-border-tertiary);transition:background .3s}
+.pip.done{background:var(--color-border-info)}
+.pip.active{background:var(--color-text-info)}
+.sc{background:var(--color-background-primary);border:.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:1rem 1.25rem}
+.sh{display:flex;align-items:baseline;gap:10px;margin-bottom:6px}
+.snum{font-size:12px;color:var(--color-text-tertiary)}
+.stitle{font-size:15px;font-weight:500;color:var(--color-text-primary)}
+.sdesc{font-size:13px;color:var(--color-text-secondary);line-height:1.55;margin-bottom:14px}
+.pr{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.pod{display:flex;flex-direction:column;align-items:center;gap:3px}
+.pb{width:74px;height:50px;border-radius:8px;border:.5px solid;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:11px;font-weight:500;line-height:1.35;text-align:center;transition:background .3s}
+.pname{font-size:11px;color:var(--color-text-tertiary)}
+.ptag{font-size:10px;height:14px;font-weight:500}
+.tag-ordered{color:#854F0B}
+.tag-parallel{color:var(--color-text-info)}
+.tag-blank{color:transparent}
+.s-none{background:var(--color-background-secondary);border-color:var(--color-border-tertiary);color:var(--color-text-tertiary)}
+.s-pend{background:#FAEEDA;border-color:#854F0B;color:#633806}
+.s-crea{background:#E6F1FB;border-color:#185FA5;color:#0C447C}
+.s-star{background:#EEEDFE;border-color:#534AB7;color:#3C3489}
+.s-rdy{background:#E1F5EE;border-color:#0F6E56;color:#085041}
+.s-wait{background:#F1EFE8;border-color:#B4B2A9;color:#5F5E5A}
+.nb{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:8px 12px;font-size:12px;color:var(--color-text-secondary);line-height:1.5;margin-bottom:14px}
+.nb strong{color:var(--color-text-primary);font-weight:500}
+.nr{display:flex;align-items:center;justify-content:space-between;margin-top:4px}
+.btn{background:transparent;border:.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);padding:6px 18px;font-size:13px;color:var(--color-text-primary);cursor:pointer}
+.btn:disabled{opacity:.3;cursor:default}
+.btn:not(:disabled):hover{background:var(--color-background-secondary)}
+.ctr{font-size:12px;color:var(--color-text-tertiary)}
+.legend{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.leg{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--color-text-secondary)}
+.leg-dot{width:10px;height:10px;border-radius:2px;border:.5px solid;flex-shrink:0}
+</style>
+
+<div class="sw">
+  <div class="ph-label" id="ph"></div>
+  <div class="pips" id="pips"></div>
+  <div class="legend">
+    <div class="leg"><div class="leg-dot" style="background:#FAEEDA;border-color:#854F0B"></div>Pending</div>
+    <div class="leg"><div class="leg-dot" style="background:#E6F1FB;border-color:#185FA5"></div>ContainerCreating</div>
+    <div class="leg"><div class="leg-dot" style="background:#EEEDFE;border-color:#534AB7"></div>Running (startup)</div>
+    <div class="leg"><div class="leg-dot" style="background:#E1F5EE;border-color:#0F6E56"></div>Ready</div>
+    <div class="leg"><div class="leg-dot" style="background:#F1EFE8;border-color:#B4B2A9"></div>Blocked (waiting)</div>
+  </div>
+  <div class="sc" id="sc"></div>
+</div>
+
+<script>
+const N    = {l:'—',           c:'s-none', t:'blank'};
+const PEND = {l:'Pending',     c:'s-pend', t:'blank'};
+const CREA = {l:'Container\nCreating', c:'s-crea', t:'blank'};
+const STAR = {l:'Running\n(startup)', c:'s-star', t:'blank'};
+const RDY  = {l:'Ready',       c:'s-rdy',  t:'blank'};
+const WAIT = {l:'Waiting\nfor pod-0', c:'s-wait', t:'blank'};
+const PEND_P = {l:'Pending',   c:'s-pend', t:'parallel'};
+const CREA_P = {l:'Container\nCreating', c:'s-crea', t:'parallel'};
+const STAR_P = {l:'Running\n(startup)', c:'s-star', t:'parallel'};
+const RDY_P  = {l:'Ready',     c:'s-rdy',  t:'parallel'};
+
+const steps = [
+  {
+    phase: 'fresh statefulset — nothing exists yet',
+    title: 'helm install — manifests applied',
+    desc: 'Helm renders the chart and sends a StatefulSet manifest (replicas: 5) to the API server. The StatefulSet object exists in etcd but no pods have been created yet.',
+    note: '<strong>StatefulSet controller behaviour:</strong> even though 5 pods are desired, it will not schedule all 5 at once. It must create pod-0 first and wait for it to be Ready before doing anything else. This is the OrderedReady rule for the first pod.',
+    pods: [
+      {name:'pod-0', s:N, tag:'ordered'},
+      {name:'pod-1', s:N, tag:'blank'},
+      {name:'pod-2', s:N, tag:'blank'},
+      {name:'pod-3', s:N, tag:'blank'},
+      {name:'pod-4', s:N, tag:'blank'},
+    ],
+  },
+  {
+    phase: 'phase 1 — pod-0 ordered ready',
+    title: 'pod-0 scheduled (OrderedReady)',
+    desc: 'The controller creates only pod-0. The scheduler assigns it to a node. pod-1 through pod-4 are not created yet — the controller is blocked waiting for pod-0.',
+    note: '<strong>Why does this rule exist?</strong> StatefulSets are designed for stateful apps (databases, queues) where pod-0 is often the primary/leader. Bringing it up first before followers prevents split-brain scenarios.',
+    pods: [
+      {name:'pod-0', s:PEND, tag:'ordered'},
+      {name:'pod-1', s:N,    tag:'blank'},
+      {name:'pod-2', s:N,    tag:'blank'},
+      {name:'pod-3', s:N,    tag:'blank'},
+      {name:'pod-4', s:N,    tag:'blank'},
+    ],
+  },
+  {
+    phase: 'phase 1 — pod-0 ordered ready',
+    title: 'pod-0 pulls image & creates container',
+    desc: 'The kubelet on the assigned node pulls the Docker image and sets up the container. pod-1–4 still do not exist. The controller watches pod-0\'s status and will not proceed until it is Ready.',
+    note: '<strong>If pod-0 gets stuck here</strong> (bad image, OOMKilled, CrashLoopBackOff) the entire StatefulSet stalls. None of the other pods will ever be created until pod-0 is healthy.',
+    pods: [
+      {name:'pod-0', s:CREA, tag:'ordered'},
+      {name:'pod-1', s:N,    tag:'blank'},
+      {name:'pod-2', s:N,    tag:'blank'},
+      {name:'pod-3', s:N,    tag:'blank'},
+      {name:'pod-4', s:N,    tag:'blank'},
+    ],
+  },
+  {
+    phase: 'phase 1 — pod-0 ordered ready',
+    title: 'pod-0 running — startup probe active',
+    desc: 'pod-0\'s container has started. If a startupProbe is configured, the kubelet is polling it. The pod shows Running but is not yet Ready. pod-1–4 are still blocked.',
+    note: '<strong>Running ≠ Ready.</strong> The controller waits for the readiness probe to pass, not just for the container to start. A pod can sit in Running for minutes if its app takes time to initialise.',
+    pods: [
+      {name:'pod-0', s:STAR, tag:'ordered'},
+      {name:'pod-1', s:N,    tag:'blank'},
+      {name:'pod-2', s:N,    tag:'blank'},
+      {name:'pod-3', s:N,    tag:'blank'},
+      {name:'pod-4', s:N,    tag:'blank'},
+    ],
+  },
+  {
+    phase: 'phase 1 — pod-0 ordered ready',
+    title: 'pod-0 Ready — gate opens',
+    desc: 'pod-0\'s readiness probe passes. It joins the Service endpoint list and starts receiving traffic. The OrderedReady gate is now satisfied. The controller is unblocked.',
+    note: '<strong>This is the handoff point.</strong> With podManagementPolicy: Parallel, the controller now creates pod-1, pod-2, pod-3, and pod-4 all at once rather than one at a time.',
+    pods: [
+      {name:'pod-0', s:RDY,  tag:'ordered'},
+      {name:'pod-1', s:N,    tag:'blank'},
+      {name:'pod-2', s:N,    tag:'blank'},
+      {name:'pod-3', s:N,    tag:'blank'},
+      {name:'pod-4', s:N,    tag:'blank'},
+    ],
+  },
+  {
+    phase: 'phase 2 — pod-1 to pod-4 parallel',
+    title: 'pod-1 through pod-4 scheduled simultaneously',
+    desc: 'The controller creates all four remaining pods at once. The scheduler assigns each to a node in parallel. All four enter Pending at the same time — no ordering between them.',
+    note: '<strong>This is where Parallel policy takes effect.</strong> Without it (OrderedReady for all), pod-1 would have to be Ready before pod-2 was scheduled, and so on — 4 sequential waits instead of one parallel race.',
+    pods: [
+      {name:'pod-0', s:RDY,    tag:'ordered'},
+      {name:'pod-1', s:PEND_P, tag:'parallel'},
+      {name:'pod-2', s:PEND_P, tag:'parallel'},
+      {name:'pod-3', s:PEND_P, tag:'parallel'},
+      {name:'pod-4', s:PEND_P, tag:'parallel'},
+    ],
+  },
+  {
+    phase: 'phase 2 — pod-1 to pod-4 parallel',
+    title: 'All four pull images concurrently',
+    desc: 'Each node\'s kubelet pulls the image and sets up containers for pod-1 through pod-4 simultaneously. All four are in ContainerCreating at the same time.',
+    note: '<strong>Image caching matters here.</strong> If all four land on different nodes and the image is not cached, four parallel pulls happen. If they share nodes, the cached layer speeds things up.',
+    pods: [
+      {name:'pod-0', s:RDY,    tag:'ordered'},
+      {name:'pod-1', s:CREA_P, tag:'parallel'},
+      {name:'pod-2', s:CREA_P, tag:'parallel'},
+      {name:'pod-3', s:CREA_P, tag:'parallel'},
+      {name:'pod-4', s:CREA_P, tag:'parallel'},
+    ],
+  },
+  {
+    phase: 'phase 2 — pod-1 to pod-4 parallel',
+    title: 'All four starting — startup probes racing',
+    desc: 'All four containers are running their startup probes concurrently. They may finish in any order depending on node speed and app init time. There is no required ordering between them.',
+    note: '<strong>pod-4 can become Ready before pod-2</strong> — that is completely normal and expected with Parallel policy. The ordinal number no longer dictates startup order after the gate opens.',
+    pods: [
+      {name:'pod-0', s:RDY,    tag:'ordered'},
+      {name:'pod-1', s:STAR_P, tag:'parallel'},
+      {name:'pod-2', s:STAR_P, tag:'parallel'},
+      {name:'pod-3', s:STAR_P, tag:'parallel'},
+      {name:'pod-4', s:STAR_P, tag:'parallel'},
+    ],
+  },
+  {
+    phase: 'statefulset ready',
+    title: 'All 5 pods Ready',
+    desc: 'pod-1 through pod-4 pass their readiness probes and join the Service endpoints. The StatefulSet reports 5/5 ready. helm install --wait would return success at this point.',
+    note: '<strong>Total startup time</strong> is roughly: pod-0 startup time + slowest of (pod-1..4) startup time. With OrderedReady for all 5 it would be: sum of all 5 startup times — often 4–5x longer.',
+    pods: [
+      {name:'pod-0', s:RDY,   tag:'ordered'},
+      {name:'pod-1', s:RDY_P, tag:'parallel'},
+      {name:'pod-2', s:RDY_P, tag:'parallel'},
+      {name:'pod-3', s:RDY_P, tag:'parallel'},
+      {name:'pod-4', s:RDY_P, tag:'parallel'},
+    ],
+  },
+];
+
+let cur = 0;
+
+function tagClass(t) {
+  if (t === 'ordered') return 'tag-ordered';
+  if (t === 'parallel') return 'tag-parallel';
+  return 'tag-blank';
+}
+function tagLabel(t) {
+  if (t === 'ordered') return 'ordered';
+  if (t === 'parallel') return 'parallel';
+  return '\u00a0';
+}
+
+function render() {
+  const s = steps[cur];
+  document.getElementById('ph').textContent = s.phase;
+
+  document.getElementById('pips').innerHTML = steps.map((_,i) =>
+    `<div class="pip${i<cur?' done':i===cur?' active':''}"></div>`
+  ).join('');
+
+  const podHTML = s.pods.map(p => `
+    <div class="pod">
+      <div class="pb ${p.s.c}">${p.s.l.replace(/\n/g,'<br>')}</div>
+      <div class="pname">${p.name}</div>
+      <div class="ptag ${tagClass(p.tag)}">${tagLabel(p.tag)}</div>
+    </div>`).join('');
+
+  document.getElementById('sc').innerHTML = `
+    <div class="sh">
+      <span class="snum">${cur+1} / ${steps.length}</span>
+      <span class="stitle">${s.title}</span>
+    </div>
+    <div class="sdesc">${s.desc}</div>
+    <div class="pr">${podHTML}</div>
+    <div class="nb">${s.note}</div>
+    <div class="nr">
+      <button class="btn" onclick="go(-1)" ${cur===0?'disabled':''}>← Back</button>
+      <span class="ctr">${cur+1} of ${steps.length}</span>
+      <button class="btn" onclick="go(1)" ${cur===steps.length-1?'disabled':''}>Next →</button>
+    </div>`;
+}
+
+function go(d){cur=Math.max(0,Math.min(steps.length-1,cur+d));render();}
+render();
+</script>
